@@ -35,6 +35,7 @@ android {
 dependencies {
     implementation libs.appcompat
     implementation libs.material
+    implementation project(':stellarlens_camera')
     testImplementation libs.junit
     androidTestImplementation libs.ext.junit
     androidTestImplementation libs.espresso.core

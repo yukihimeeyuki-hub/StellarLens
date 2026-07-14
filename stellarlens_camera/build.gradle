@@ -32,6 +32,7 @@ android {
 dependencies {
     implementation fileTree(dir: 'libs', include: ['*.jar', '*.aar'])
     implementation libs.appcompat.v7
+    implementation libs.appcompat
     testImplementation libs.junit
     androidTestImplementation libs.runner
     androidTestImplementation libs.android.espresso.core
@@ -42,4 +43,5 @@ dependencies {
     implementation "androidx.camera:camera-camera2:${camerax_version}"
     implementation "androidx.camera:camera-lifecycle:${camerax_version}"
     implementation "androidx.camera:camera-view:${camerax_version}"
+    implementation "androidx.concurrent:concurrent-futures:1.1.0"
 }
