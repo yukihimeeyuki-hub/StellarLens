@@ -1,0 +1,2 @@
+# StellarLens
+这个项目的主要目的是为了解决uniapp官方的livepusher十分不好用的问题 以及大多数的此类插件需要付费的问题
