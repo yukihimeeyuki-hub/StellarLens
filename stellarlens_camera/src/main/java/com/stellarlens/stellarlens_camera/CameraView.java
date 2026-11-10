@@ -1,7 +1,9 @@
 package com.stellarlens.stellarlens_camera;
 
 import android.content.Context;
-import android.hardware.camera2.CameraCharacteristics;
+import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.view.MotionEvent;
@@ -9,59 +11,43 @@ import android.widget.FrameLayout;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-import androidx.camera.camera2.interop.Camera2CameraInfo;
-import androidx.camera.core.AspectRatio;
-import androidx.camera.core.Camera;
-import androidx.camera.core.CameraControl;
-import androidx.camera.core.CameraInfo;
-import androidx.camera.core.CameraSelector;
-import androidx.camera.core.ImageCapture;
-import androidx.camera.core.ImageCaptureException;
-import androidx.camera.core.Preview;
-import androidx.camera.core.VideoCapture;
-import androidx.camera.view.PreviewView;
-import androidx.camera.core.ZoomState;
-import androidx.camera.lifecycle.ProcessCameraProvider;
-import androidx.core.content.ContextCompat;
 import androidx.lifecycle.LifecycleOwner;
 
-import com.google.common.util.concurrent.ListenableFuture;
-
 import java.io.File;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
+/**
+ * Camera preview / capture view with a single public API on every supported Android version.
+ *
+ * <p>API 21+ is backed by CameraX; API 19-20 falls back to the legacy
+ * {@link android.hardware.Camera} API. Callbacks are always delivered on the main thread.</p>
+ */
 public class CameraView extends FrameLayout {
 
     private static final String TAG = "StellarLens-CameraView";
-    private static final float PINCH_ZOOM_SENSITIVITY = 0.002f;
 
-    private PreviewView previewView;
-    private ProcessCameraProvider cameraProvider;
-    private Preview preview;
-    private ImageCapture imageCapture;
-    private VideoCapture videoCapture;
-    private Camera camera;
-    private CameraInfo cameraInfo;
-    private CameraControl cameraControl;
-    private CameraSelector cameraSelector;
-    private int lensFacing = CameraSelector.LENS_FACING_BACK;
+    public static final int LENS_FACING_FRONT = 0;
+    public static final int LENS_FACING_BACK = 1;
 
-    private LifecycleOwner lifecycleOwner;
-    private boolean isCameraReady = false;
-    private boolean isRecording = false;
+    public static final int FLASH_MODE_AUTO = 0;
+    public static final int FLASH_MODE_ON = 1;
+    public static final int FLASH_MODE_OFF = 2;
 
-    private float currentZoom = 1.0f;
-    private float maxZoom = 10.0f;
-    private float minZoom = 1.0f;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+
+    LifecycleOwner lifecycleOwner;
+    CameraController controller;
+
+    int lensFacing = LENS_FACING_BACK;
+    int flashMode = FLASH_MODE_AUTO;
+    int photoQuality = 1;
+    File outputDir;
+    float zoom = 1f;
+    float minZoom = 1f;
+    float maxZoom = 1f;
+    boolean cameraReady;
+    boolean recording;
+
     private float lastPinchDistance = -1f;
-
-    private int flashMode = ImageCapture.FLASH_MODE_AUTO;
-    private int photoQuality = 1;
-    private File outputDir;
-
-    private final ExecutorService executor = Executors.newSingleThreadExecutor();
 
     private OnCameraReadyListener onCameraReadyListener;
     private OnPhotoTakenListener onPhotoTakenListener;
@@ -78,160 +64,205 @@ public class CameraView extends FrameLayout {
     public CameraView(@NonNull Context context, @Nullable AttributeSet attrs, int defStyleAttr) { super(context, attrs, defStyleAttr); init(); }
 
     private void init() {
-        previewView = new PreviewView(getContext());
-        addView(previewView, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
-        cameraSelector = new CameraSelector.Builder().requireLensFacing(lensFacing).build();
         outputDir = getContext().getCacheDir();
     }
 
-    public void setLifecycleOwner(@NonNull LifecycleOwner owner) { this.lifecycleOwner = owner; }
-
-    public void startCamera() {
-        if (lifecycleOwner == null) { Log.e(TAG, "LifecycleOwner not set"); notifyError("LifecycleOwner not set"); return; }
-        ListenableFuture<ProcessCameraProvider> future = ProcessCameraProvider.getInstance(getContext());
-        future.addListener(() -> {
-            try {
-                cameraProvider = future.get();
-                bindCameraUseCases();
-            } catch (ExecutionException | InterruptedException e) {
-                Log.e(TAG, "Failed to get CameraProvider", e);
-                notifyError("Camera init failed: " + e.getMessage());
-            }
-        }, ContextCompat.getMainExecutor(getContext()));
+    public void setLifecycleOwner(@NonNull LifecycleOwner owner) {
+        this.lifecycleOwner = owner;
     }
 
-    private void bindCameraUseCases() {
-        if (cameraProvider == null) return;
-        cameraProvider.unbindAll();
-
-        preview = new Preview.Builder().setTargetAspectRatio(AspectRatio.RATIO_16_9).build();
-
-        ImageCapture.Builder icb = new ImageCapture.Builder()
-                .setTargetAspectRatio(AspectRatio.RATIO_16_9)
-                .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY);
-        switch (photoQuality) {
-            case 0: icb.setTargetResolution(new android.util.Size(1280, 720)); break;
-            case 1: icb.setTargetResolution(new android.util.Size(1920, 1080)); break;
-            case 2: icb.setTargetResolution(new android.util.Size(3840, 2160)); break;
+    public void startCamera() {
+        if (controller != null) {
+            controller.release();
+            controller = null;
         }
-        imageCapture = icb.build();
-
-        videoCapture = new VideoCapture.Builder().setTargetAspectRatio(AspectRatio.RATIO_16_9).build();
-
-        try {
-            camera = cameraProvider.bindToLifecycle(lifecycleOwner, cameraSelector, preview, imageCapture, videoCapture);
-            preview.setSurfaceProvider(previewView.getSurfaceProvider());
-            cameraControl = camera.getCameraControl();
-            cameraInfo = camera.getCameraInfo();
-
-            ZoomState zs = cameraInfo.getZoomState().getValue();
-            if (zs != null) { minZoom = zs.getMinZoomRatio(); maxZoom = zs.getMaxZoomRatio(); currentZoom = zs.getZoomRatio(); }
-
-            isCameraReady = true;
-            Log.d(TAG, "Camera ready, zoom: " + minZoom + " - " + maxZoom);
-            if (onCameraReadyListener != null) onCameraReadyListener.onCameraReady();
-        } catch (Exception e) {
-            Log.e(TAG, "Bind failed", e);
-            notifyError("Camera bind failed: " + e.getMessage());
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            if (lifecycleOwner == null) {
+                notifyError("LifecycleOwner not set");
+                return;
+            }
+            try {
+                controller = new CameraXController(this);
+            } catch (Throwable t) {
+                notifyError("CameraX init failed: " + t.getMessage());
+                return;
+            }
+        } else {
+            controller = new LegacyCameraController(this);
         }
+        controller.start();
     }
 
     public void takePhoto() {
-        if (!isCameraReady || imageCapture == null) { notifyError("Camera not ready"); return; }
-        File f = new File(outputDir, "SL_" + System.currentTimeMillis() + ".jpg");
-        imageCapture.takePicture(new ImageCapture.OutputFileOptions.Builder(f).build(), executor, new ImageCapture.OnImageSavedCallback() {
-            @Override public void onImageSaved(@NonNull ImageCapture.OutputFileResults r) {
-                String p = f.getAbsolutePath();
-                Log.d(TAG, "Photo: " + p);
-                if (onPhotoTakenListener != null) onPhotoTakenListener.onPhotoTaken(p);
-            }
-            @Override public void onError(@NonNull ImageCaptureException e) {
-                Log.e(TAG, "Photo error", e);
-                notifyError("Photo failed: " + e.getMessage());
-            }
-        });
+        if (controller == null) {
+            notifyError("Camera not initialized");
+            return;
+        }
+        controller.takePhoto();
     }
 
     public void startRecording() {
-        if (!isCameraReady) { notifyError("Camera not ready"); return; }
-        if (isRecording) { Log.w(TAG, "Already recording"); return; }
-        File f = new File(outputDir, "SL_" + System.currentTimeMillis() + ".mp4");
-        videoCapture.startRecording(new VideoCapture.OutputFileOptions.Builder(f).build(), executor, new VideoCapture.OnVideoSavedCallback() {
-            @Override public void onVideoSaved(@NonNull VideoCapture.OutputFileResults r) {
-                isRecording = false;
-                String p = f.getAbsolutePath();
-                Log.d(TAG, "Video: " + p);
-                if (onVideoSavedListener != null) onVideoSavedListener.onVideoSaved(p);
-            }
-            @Override public void onError(int error, @NonNull String msg, @Nullable Throwable cause) {
-                isRecording = false;
-                Log.e(TAG, "Video error: " + msg, cause);
-                notifyError("Video error: " + msg);
-            }
-        });
-        isRecording = true;
+        if (controller == null) {
+            notifyError("Camera not initialized");
+            return;
+        }
+        controller.startRecording();
     }
 
-    public void stopRecording() { if (isRecording) { videoCapture.stopRecording(); isRecording = false; } }
-    public boolean isRecording() { return isRecording; }
+    public void stopRecording() {
+        if (controller != null) controller.stopRecording();
+        recording = false;
+    }
+
+    public boolean isRecording() {
+        return recording;
+    }
 
     public void setZoom(float ratio) {
-        if (cameraControl == null) return;
-        currentZoom = Math.max(minZoom, Math.min(maxZoom, ratio));
-        cameraControl.setZoomRatio(currentZoom);
+        if (controller != null) {
+            controller.setZoom(ratio);
+        } else {
+            zoom = Math.max(1f, ratio);
+        }
     }
 
-    public float getZoom() { return currentZoom; }
+    public float getZoom() { return zoom; }
     public float getMinZoom() { return minZoom; }
     public float getMaxZoom() { return maxZoom; }
 
     public void switchCamera() {
-        lensFacing = (lensFacing == CameraSelector.LENS_FACING_BACK) ? CameraSelector.LENS_FACING_FRONT : CameraSelector.LENS_FACING_BACK;
-        cameraSelector = new CameraSelector.Builder().requireLensFacing(lensFacing).build();
-        bindCameraUseCases();
+        if (controller != null) {
+            controller.switchCamera();
+        } else {
+            lensFacing = lensFacing == LENS_FACING_BACK
+                    ? LENS_FACING_FRONT
+                    : LENS_FACING_BACK;
+        }
     }
 
     public int getLensFacing() { return lensFacing; }
 
-    public void setFlashMode(int mode) { this.flashMode = mode; if (imageCapture != null) imageCapture.setFlashMode(mode); }
+    public void setFlashMode(int mode) {
+        if (mode < FLASH_MODE_AUTO || mode > FLASH_MODE_OFF) return;
+        flashMode = mode;
+        if (controller != null) controller.setFlashMode(mode);
+    }
+
     public int getFlashMode() { return flashMode; }
 
     public void setFlashModeString(String mode) {
+        if (mode == null) return;
         switch (mode.toLowerCase()) {
-            case "on": setFlashMode(ImageCapture.FLASH_MODE_ON); break;
-            case "off": setFlashMode(ImageCapture.FLASH_MODE_OFF); break;
-            default: setFlashMode(ImageCapture.FLASH_MODE_AUTO); break;
+            case "on": setFlashMode(FLASH_MODE_ON); break;
+            case "off": setFlashMode(FLASH_MODE_OFF); break;
+            default: setFlashMode(FLASH_MODE_AUTO); break;
         }
     }
 
     public String getFlashModeString() {
         switch (flashMode) {
-            case ImageCapture.FLASH_MODE_ON: return "on";
-            case ImageCapture.FLASH_MODE_OFF: return "off";
+            case FLASH_MODE_ON: return "on";
+            case FLASH_MODE_OFF: return "off";
             default: return "auto";
         }
     }
 
-    public void setPhotoQuality(int q) { if (q < 0 || q > 2) return; this.photoQuality = q; if (isCameraReady) bindCameraUseCases(); }
+    public void setPhotoQuality(int quality) {
+        if (quality < 0 || quality > 2) return;
+        photoQuality = quality;
+        if (controller != null) controller.setPhotoQuality(quality);
+    }
+
     public int getPhotoQuality() { return photoQuality; }
-    public void setOutputDir(File dir) { this.outputDir = dir; }
+
+    public void setOutputDir(File dir) {
+        if (dir == null) return;
+        outputDir = dir;
+        if (controller != null) controller.setOutputDir(dir);
+    }
+
     public File getOutputDir() { return outputDir; }
+
+    public boolean hasFlash() {
+        return controller != null && controller.hasFlash();
+    }
+
+    public boolean isCameraReady() { return cameraReady; }
 
     public void setOnCameraReadyListener(OnCameraReadyListener l) { onCameraReadyListener = l; }
     public void setOnPhotoTakenListener(OnPhotoTakenListener l) { onPhotoTakenListener = l; }
     public void setOnVideoSavedListener(OnVideoSavedListener l) { onVideoSavedListener = l; }
     public void setOnErrorListener(OnErrorListener l) { onErrorListener = l; }
 
-    private void notifyError(String msg) { Log.e(TAG, msg); if (onErrorListener != null) onErrorListener.onError(msg); }
-
-    public boolean hasFlash() {
-        if (cameraInfo == null) return false;
-        Integer f = Camera2CameraInfo.from(cameraInfo).getCameraCharacteristic(CameraCharacteristics.FLASH_INFO_AVAILABLE);
-        return f != null && f != 0;
+    public void releaseCamera() {
+        if (controller != null) {
+            controller.release();
+            controller = null;
+        }
+        cameraReady = false;
+        recording = false;
+        minZoom = 1f;
+        maxZoom = 1f;
     }
 
-    public void releaseCamera() { if (cameraProvider != null) cameraProvider.unbindAll(); isCameraReady = false; }
+    void notifyReady() {
+        mainHandler.post(() -> {
+            if (onCameraReadyListener != null) onCameraReadyListener.onCameraReady();
+        });
+    }
+
+    void notifyPhoto(String path) {
+        mainHandler.post(() -> {
+            if (onPhotoTakenListener != null) onPhotoTakenListener.onPhotoTaken(path);
+        });
+    }
+
+    void notifyVideo(String path) {
+        mainHandler.post(() -> {
+            if (onVideoSavedListener != null) onVideoSavedListener.onVideoSaved(path);
+        });
+    }
+
+    void notifyError(String message) {
+        Log.e(TAG, message);
+        mainHandler.post(() -> {
+            if (onErrorListener != null) onErrorListener.onError(message);
+        });
+    }
 
     @Override
-    protected void onDetachedFromWindow() { super.onDetachedFromWindow(); releaseCamera(); executor.shutdown(); }
+    public boolean onTouchEvent(MotionEvent event) {
+        if (event.getPointerCount() < 2) {
+            if (event.getActionMasked() == MotionEvent.ACTION_UP
+                    || event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
+                lastPinchDistance = -1f;
+            }
+            // Consume the single-finger down event so that the following pinch moves are delivered.
+            return true;
+        }
+        switch (event.getActionMasked()) {
+            case MotionEvent.ACTION_POINTER_DOWN:
+            case MotionEvent.ACTION_MOVE:
+                float dx = event.getX(0) - event.getX(1);
+                float dy = event.getY(0) - event.getY(1);
+                float distance = (float) Math.hypot(dx, dy);
+                if (lastPinchDistance > 0f && distance > 0f) {
+                    setZoom(getZoom() * distance / lastPinchDistance);
+                }
+                lastPinchDistance = distance;
+                return true;
+            case MotionEvent.ACTION_POINTER_UP:
+                lastPinchDistance = -1f;
+                break;
+            default:
+                break;
+        }
+        return true;
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        super.onDetachedFromWindow();
+        releaseCamera();
+    }
 }

@@ -7,7 +7,7 @@ import android.widget.FrameLayout;
 import androidx.annotation.NonNull;
 import androidx.lifecycle.LifecycleOwner;
 
-import com.alibaba.fastjson.JSONObject;
+import java.util.HashMap;
 
 import io.dcloud.feature.uniapp.UniSDKInstance;
 import io.dcloud.feature.uniapp.annotation.UniJSMethod;
@@ -44,19 +44,19 @@ public class StellarLensCameraComponent extends UniComponent<CameraView> {
         });
 
         cameraView.setOnPhotoTakenListener(path -> {
-            JSONObject data = new JSONObject();
+            HashMap<String, Object> data = new HashMap<>();
             data.put("tempFilePath", path);
             fireEvent("phototaken", data);
         });
 
         cameraView.setOnVideoSavedListener(path -> {
-            JSONObject data = new JSONObject();
+            HashMap<String, Object> data = new HashMap<>();
             data.put("tempFilePath", path);
             fireEvent("videosaved", data);
         });
 
         cameraView.setOnErrorListener(msg -> {
-            JSONObject data = new JSONObject();
+            HashMap<String, Object> data = new HashMap<>();
             data.put("message", msg);
             fireEvent("error", data);
         });
@@ -91,7 +91,7 @@ public class StellarLensCameraComponent extends UniComponent<CameraView> {
             return;
         }
         cameraView.setOnPhotoTakenListener(path -> {
-            JSONObject result = new JSONObject();
+            HashMap<String, Object> result = new HashMap<>();
             result.put("tempFilePath", path);
             result.put("success", true);
             if (callback != null) callback.invoke(result);
@@ -106,7 +106,7 @@ public class StellarLensCameraComponent extends UniComponent<CameraView> {
             return;
         }
         cameraView.setOnVideoSavedListener(path -> {
-            JSONObject result = new JSONObject();
+            HashMap<String, Object> result = new HashMap<>();
             result.put("tempFilePath", path);
             result.put("success", true);
             if (callback != null) callback.invoke(result);
@@ -122,7 +122,7 @@ public class StellarLensCameraComponent extends UniComponent<CameraView> {
     @UniJSMethod(uiThread = true)
     public void isRecording(UniJSCallback callback) {
         boolean recording = cameraView != null && cameraView.isRecording();
-        JSONObject result = new JSONObject();
+        HashMap<String, Object> result = new HashMap<>();
         result.put("recording", recording);
         if (callback != null) callback.invoke(result);
     }
@@ -135,7 +135,7 @@ public class StellarLensCameraComponent extends UniComponent<CameraView> {
     @UniJSMethod(uiThread = true)
     public void getZoom(UniJSCallback callback) {
         if (cameraView == null) return;
-        JSONObject result = new JSONObject();
+        HashMap<String, Object> result = new HashMap<>();
         result.put("zoom", cameraView.getZoom());
         result.put("minZoom", cameraView.getMinZoom());
         result.put("maxZoom", cameraView.getMaxZoom());
@@ -155,7 +155,7 @@ public class StellarLensCameraComponent extends UniComponent<CameraView> {
     @UniJSMethod(uiThread = true)
     public void getFlashMode(UniJSCallback callback) {
         if (cameraView == null) return;
-        JSONObject result = new JSONObject();
+        HashMap<String, Object> result = new HashMap<>();
         result.put("flashMode", cameraView.getFlashModeString());
         if (callback != null) callback.invoke(result);
     }
@@ -173,7 +173,7 @@ public class StellarLensCameraComponent extends UniComponent<CameraView> {
     @UniJSMethod(uiThread = true)
     public void getCameraInfo(UniJSCallback callback) {
         if (cameraView == null) return;
-        JSONObject result = new JSONObject();
+        HashMap<String, Object> result = new HashMap<>();
         result.put("hasFlash", cameraView.hasFlash());
         result.put("isFrontCamera", cameraView.getLensFacing() == 0);
         result.put("isReady", isReady);
@@ -210,8 +210,8 @@ public class StellarLensCameraComponent extends UniComponent<CameraView> {
         if (cameraView != null) cameraView.setPhotoQuality(quality);
     }
 
-    private JSONObject errorResult(String msg) {
-        JSONObject result = new JSONObject();
+    private HashMap<String, Object> errorResult(String msg) {
+        HashMap<String, Object> result = new HashMap<>();
         result.put("success", false);
         result.put("message", msg);
         return result;

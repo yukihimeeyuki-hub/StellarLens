@@ -12,11 +12,12 @@ android {
 
     defaultConfig {
         applicationId "com.StellarLens.stellarlens"
-        minSdk 21
+        minSdk 19
         targetSdk 36
         versionCode 1
         versionName "1.0"
 
+        multiDexEnabled true
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -35,6 +36,8 @@ android {
 dependencies {
     implementation libs.appcompat
     implementation libs.material
+    // minSdk 19 has no native multidex; the bundled uni-app engine pushes the app over 64K methods.
+    implementation "androidx.multidex:multidex:2.0.1"
     implementation project(':stellarlens_camera')
     testImplementation libs.junit
     androidTestImplementation libs.ext.junit

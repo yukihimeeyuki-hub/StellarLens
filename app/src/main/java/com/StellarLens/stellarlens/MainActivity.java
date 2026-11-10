@@ -1,5 +1,8 @@
 package com.StellarLens.stellarlens;
 
+import android.Manifest;
+import android.content.pm.PackageManager;
+import android.graphics.Color;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.ViewGroup;
@@ -11,17 +14,24 @@ import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.camera.core.ImageCapture;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
 
 import com.stellarlens.stellarlens_camera.CameraView;
 
 /**
- * Test Activity for StellarLens Camera module.
+ * Test Activity for the StellarLens Camera module.
  * This app exists solely to test the stellarlens_camera library.
  */
 public class MainActivity extends AppCompatActivity {
 
     private static final String TAG = "StellarLens-TestApp";
+    private static final int PERMISSIONS_REQUEST = 100;
 
     private CameraView cameraView;
     private TextView statusText;
@@ -29,25 +39,35 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
 
+        if (!hasCameraPermission()) {
+            ActivityCompat.requestPermissions(this, new String[]{
+                    Manifest.permission.CAMERA,
+                    Manifest.permission.RECORD_AUDIO
+            }, PERMISSIONS_REQUEST);
+            return;
+        }
+        setupUi();
+    }
+
+    private void setupUi() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setLayoutParams(new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
 
-        // Status
         statusText = new TextView(this);
         statusText.setText("Camera demo - initializing...");
-        statusText.setPadding(16, 48, 16, 8);
+        statusText.setPadding(16, 16, 16, 8);
         root.addView(statusText);
 
-        // Camera container
         FrameLayout camContainer = new FrameLayout(this);
-        LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams containerParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0);
-        cp.weight = 1;
-        camContainer.setLayoutParams(cp);
+        containerParams.weight = 1;
+        camContainer.setLayoutParams(containerParams);
 
         cameraView = new CameraView(this);
         camContainer.addView(cameraView, new FrameLayout.LayoutParams(
@@ -55,7 +75,6 @@ public class MainActivity extends AppCompatActivity {
                 ViewGroup.LayoutParams.MATCH_PARENT));
         root.addView(camContainer);
 
-        // Controls
         LinearLayout controls = new LinearLayout(this);
         controls.setOrientation(LinearLayout.HORIZONTAL);
         controls.setPadding(8, 8, 8, 16);
@@ -84,22 +103,18 @@ public class MainActivity extends AppCompatActivity {
         });
 
         addButton(controls, "Flash", v -> {
-            String mode;
             switch (cameraView.getFlashMode()) {
-                case ImageCapture.FLASH_MODE_OFF:
-                    cameraView.setFlashMode(ImageCapture.FLASH_MODE_ON);
-                    mode = "on";
+                case CameraView.FLASH_MODE_AUTO:
+                    cameraView.setFlashMode(CameraView.FLASH_MODE_ON);
                     break;
-                case ImageCapture.FLASH_MODE_ON:
-                    cameraView.setFlashMode(ImageCapture.FLASH_MODE_AUTO);
-                    mode = "auto";
+                case CameraView.FLASH_MODE_ON:
+                    cameraView.setFlashMode(CameraView.FLASH_MODE_OFF);
                     break;
                 default:
-                    cameraView.setFlashMode(ImageCapture.FLASH_MODE_OFF);
-                    mode = "off";
+                    cameraView.setFlashMode(CameraView.FLASH_MODE_AUTO);
                     break;
             }
-            statusText.setText("Flash: " + mode);
+            statusText.setText("Flash: " + cameraView.getFlashModeString());
         });
 
         addButton(controls, "Record", v -> {
@@ -113,10 +128,22 @@ public class MainActivity extends AppCompatActivity {
         });
 
         root.addView(controls);
-
+        root.setBackgroundColor(Color.BLACK);
+        statusText.setTextColor(Color.WHITE);
         setContentView(root);
 
-        // Wire lifecycle
+        WindowInsetsControllerCompat windowInsetsController =
+                WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
+        windowInsetsController.setAppearanceLightStatusBars(false);
+        windowInsetsController.setAppearanceLightNavigationBars(false);
+
+        ViewCompat.setOnApplyWindowInsetsListener(root, (v, insets) -> {
+            Insets bars = insets.getInsets(
+                    WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
+            v.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+            return insets;
+        });
+
         cameraView.setLifecycleOwner(this);
 
         cameraView.setOnCameraReadyListener(() ->
@@ -144,7 +171,7 @@ public class MainActivity extends AppCompatActivity {
         cameraView.startCamera();
     }
 
-    private void addButton(LinearLayout parent, String text, View.OnClickListener listener) {
+    private void addButton(LinearLayout parent, String text, android.view.View.OnClickListener listener) {
         Button btn = new Button(this);
         btn.setText(text);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -153,6 +180,24 @@ public class MainActivity extends AppCompatActivity {
         btn.setLayoutParams(lp);
         btn.setOnClickListener(listener);
         parent.addView(btn);
+    }
+
+    private boolean hasCameraPermission() {
+        return ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+                == PackageManager.PERMISSION_GRANTED;
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
+                                           @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode != PERMISSIONS_REQUEST) return;
+        if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            setupUi();
+        } else {
+            Toast.makeText(this, "Camera permission required", Toast.LENGTH_LONG).show();
+            finish();
+        }
     }
 
     @Override
